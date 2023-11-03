@@ -1,0 +1,115 @@
+---
+title: "HW1"
+output: html_document
+date: "2023-11-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#libraries
+
+library(tidyverse)
+library(earth)
+library(mgcv)
+library(ROCit)
+```
+
+
+```{r}
+#load data
+train <- read.csv("insurance_t.csv")
+train_original <- read.csv("insurance_t.csv")
+
+valid <- read.csv("insurance_v.csv")
+```
+
+```{r}
+#missing values
+colSums(is.na(train))
+
+#consider what to do with the binary variables => treat as category or as a 'missing' categorical
+```
+```{r}
+#type of each variable
+
+sapply(train, class)
+```
+```{r}
+for (col in names(train)) {
+  if (is.numeric(train[[col]])) {
+    train[[col]][is.na(train[[col]])] <- median(train[[col]], na.rm = TRUE)
+  }
+}
+
+head(train)
+```
+```{r}
+
+categorical <- c("DDA", "DIRDEP", "NSF", "SAV", "ATM", "CD", "IRA", "INV", "MM", "MMCRED",
+              "CC", "CCPURC", "SDB", "INAREA", "INS")
+
+train[,categorical] <- lapply(train[,categorical] , factor)
+
+str(train)
+```
+
+```{r}
+#no more missing values
+colSums(is.na(train))
+```
+```{r}
+#build model using the MARS algorithm (look up glm option)
+#CV is optional -> will not do
+#report variable importance for each variable
+#report area under the ROC curve and plot fo ROC curve
+
+mars_model <- earth(INS ~ ACCTAGE + DDA + DDABAL + DEP + DEPAMT + CHECKS + DIRDEP + NSF + NSFAMT + PHONE + TELLER + SAV + SAVBAL + ATM + ATMAMT + POS + POSAMT + CD + CDBAL + IRA + IRABAL + INV + INVBAL + MM + MMBAL + MMCRED + CC + CCBAL + CCPURC + SDB + INCOME + LORES + HMVAL + AGE + CRSCORE + INAREA + BRANCH, data = train, glm = list(family = binomial))
+
+summary(mars_model)
+```
+
+```{r}
+evimp(mars_model)
+```
+```{r}
+#ROC curve and area under the curve
+
+train$p_hat <- predict(mars_model, type = "response")
+
+mars_roc <- rocit(c(train$p_hat), train$INS)
+plot(mars_roc)
+
+plot(mars_roc)$optimal
+ciAUC(mars_roc, level = 0.99)
+```
+```{r}
+#Build a GAM model using splines on the continuous variables (look up family option)
+#list final model variables and defend reasoning
+#report area under the ROC curve and plot fo ROC curve
+
+#continuous variables using spline functions
+#categorical variables enter as character variables or factor
+
+gam_model <- mgcv::gam(INS ~ (s(ACCTAGE) + s(DDABAL) + s(DEP) + s(DEPAMT) + s(CHECKS) + s(NSFAMT) + s(PHONE) + s(TELLER) + s(SAVBAL) + s(ATMAMT) + s(POS) + s(POSAMT) + s(CDBAL) + s(IRABAL) + s(INVBAL) + s(MMBAL) + s(CCBAL) + s(INCOME) + s(LORES) + s(HMVAL) + s(AGE) + s(CRSCORE) + DDA + DIRDEP + NSF + SAV + ATM + CD + IRA + INV + MM + MMCRED + CC + CCPURC + SDB + INAREA + BRANCH), method = 'REML', select = TRUE, data = train, family = 'binomial')
+
+```
+
+```{r}
+summary(gam_model)
+```
+
+```{r}
+#ROC curve and area under the curve
+
+train$p_hat_2 <- predict(gam_model, type = "response")
+
+mars_roc_2 <- rocit(c(train$p_hat_2), train$INS)
+plot(mars_roc_2)
+
+plot(mars_roc_2)$optimal
+ciAUC(mars_roc_2, level = 0.99)
+```
+
