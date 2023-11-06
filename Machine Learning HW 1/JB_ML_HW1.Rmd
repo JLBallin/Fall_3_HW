@@ -1,0 +1,235 @@
+# ML HW 1
+
+### Packages
+
+```{r}
+library( dplyr )
+library( ggplot2 )
+library ( mice )
+library( earth )
+library( ROCit )
+library( pROC )
+```
+
+### Data
+
+```{r}
+# Data
+data <- read.csv( "https://raw.githubusercontent.com/JLBallin/Fall_3_HW/main/ML%20Data/insurance_t.csv" )
+```
+
+### Missing Values
+
+```{r}
+# Identify missing rows
+missing_rows <- data[ !complete.cases( data ), ]
+
+col_miss <- colnames(data)[colSums(is.na(data)) > 0]
+
+# Print the column names that have missing values
+print( col_miss )
+```
+
+```{r}
+
+# Add Missing Flags
+imputed_data <- data
+
+# Loop through missing cols and add new columns with 1 for missing and 0 for non-missing
+for ( col_name in col_miss ) {
+  new_col_name <- paste0( "Missing_", col_name )
+  imputed_data[[ new_col_name ]] <- ifelse(is.na(imputed_data[[ col_name ]]), 1, 0)
+}
+
+# Perform imputation using mice
+imputed_data <- mice( imputed_data, m = 5)
+
+# Extract the imputed data
+imputed_data <- complete( imputed_data )
+```
+
+### Data Prep
+
+```{r}
+categorical <- c("DDA", 
+                 "DIRDEP", 
+                 "NSF",
+                 "PHONE", 
+                 "TELLER",
+                 "SAV", 
+                 "ATM", 
+                 "CD", 
+                 "IRA", 
+                 "INV", 
+                 "MM", 
+                 "MMCRED",
+                 "CC", 
+                 "CCPURC", 
+                 "SDB", 
+                 "INAREA", 
+                 "INS")
+
+imputed_data[,categorical] <- lapply(imputed_data[,categorical] , factor)
+```
+
+```{r}
+## Big question if this is the correct spot to split data because we used the mice package ##
+
+# The best seed value
+set.seed(47)
+
+# Split the data into 80% training and 20% testing
+train_index <- sample(nrow(imputed_data), nrow(imputed_data) * 0.8)
+train <- imputed_data[train_index, ]
+val <- imputed_data[-train_index, ]
+```
+
+### MARS + Variable Importance
+
+```{r}
+# Build the MARS model
+mars_model <- earth( INS ~ ., 
+                     data = train, 
+                     glm = list( family = "binomial" ))
+
+summary(mars_model)
+```
+
+```{r}
+# Variable Importance
+evimp(mars_model)
+```
+
+### Plots
+
+```{r}
+train$p_hat <- predict(mars_model, type = "response")
+
+# Plot
+
+font = "sans"
+# aes mapping for legend and coloring
+object <- list('ROC'=roc(train$INS, train$p_hat))
+cols = c('ROC'='orange', 'Chance Line'='blue2')
+
+# Create plot object and map based on color
+ggroc(object, aes = c('color'), legacy.axes = TRUE, linewidth=1) +
+  
+  # Chance Line
+  geom_abline(aes(slope= 1, intercept = 0, colour = 'Chance Line'), linetype='dashed', linewidth=1) +
+  
+  # Labels
+  labs(x = "1 - Specificity",
+       y = "Sensitivity") +
+  
+  # Edit Legend
+  scale_colour_manual(name="Legend",values=cols) +
+  
+  # Theme
+  theme_bw() +
+  
+  # Box the Legend
+  theme(legend.box.background = element_rect(color="black", linewidth = 1)) +
+  theme(legend.text = element_text(family = font)) +
+  theme(legend.position = c(0.9, 0.2)) +
+  
+  # Labels Size
+  theme(axis.text.x = element_text(size = 16,  
+                                   family = font,
+                                   angle = 45,
+                                   hjust = 1,
+                                   vjust = 1)) +
+  
+  theme(axis.text.y = element_text(size = 16,  
+                                   family = font)) +
+  
+  theme(axis.title.x = element_text(size = 18,
+                                    family = font)) +
+  
+  theme(axis.title.y = element_text(size = 18, 
+                                    family = font,
+                                    vjust = 2.25))
+```
+
+```{r}
+# Calculate AUC
+train_roc <- roc(train$INS, train$p_hat)
+auc_value <- auc(train_roc)
+print(auc_value)
+```
+
+### GAM Model
+
+```{r}
+gam <- mgcv::gam(INS ~
+  (s(ACCTAGE) + s(DDABAL) + s(DEP) + s(DEPAMT) + s(CHECKS) + s(NSFAMT) + s(SAVBAL) +
+   s(ATMAMT) + s(POS) + s(POSAMT) + s(CDBAL) + s(IRABAL) + s(INVBAL) + s(MMBAL) +
+   s(CCBAL) + s(INCOME) + s(LORES) + s(HMVAL) + s(AGE) + s(CRSCORE) + factor(Missing_ACCTAGE) + 
+   factor(Missing_PHONE) + factor(Missing_POS) + factor(Missing_POSAMT) + factor(Missing_INV) + 
+   factor(Missing_INVBAL) + factor(Missing_CC) + factor(Missing_CCBAL) + factor(Missing_CCPURC) + 
+   factor(Missing_INCOME) + factor(Missing_LORES) + factor(Missing_HMVAL) + factor(Missing_AGE) + 
+   factor(Missing_CRSCORE) + DDA + DIRDEP + NSF + PHONE + TELLER + SAV + ATM + CD + IRA + INV + 
+   MM + MMCRED + CC + CCPURC + SDB + INAREA + BRANCH),
+  method = 'REML',
+  select = TRUE,
+  data = train,
+  family = 'binomial'
+)
+```
+
+```{r}
+summary(gam)
+train$p_hat_2 <- predict(gam_model, type = "response")
+
+# Calculate AUC
+train_roc <- roc(train$INS, train$p_hat)
+auc_value <- auc(train_roc)
+print(auc_value)
+```
+
+```{r}
+# Plot 
+
+font = "sans"
+# aes mapping for legend and coloring
+object <- list('ROC'=roc(train$INS, train$p_hat_2))
+cols = c('ROC'='orange', 'Chance Line'='blue2')
+
+# Create plot object and map based on color
+ggroc(object, aes = c('color'), legacy.axes = TRUE, linewidth=1) +
+  
+  # Chance Line
+  geom_abline(aes(slope= 1, intercept = 0, colour = 'Chance Line'), linetype='dashed', linewidth=1) +
+  
+  # Labels
+  labs(x = "1 - Specificity",
+       y = "Sensitivity") +
+  
+  # Edit Legend
+  scale_colour_manual(name="Legend",values=cols) +
+  
+  # Theme
+  theme_bw() +
+  
+  # Box the Legend
+  theme(legend.box.background = element_rect(color="black", linewidth = 1)) +
+  theme(legend.text = element_text(family = font)) +
+  theme(legend.position = c(0.9, 0.2)) +
+  
+  # Labels Size
+  theme(axis.text.x = element_text(size = 16,  
+                                   family = font,
+                                   angle = 45,
+                                   hjust = 1,
+                                   vjust = 1)) +
+  
+  theme(axis.text.y = element_text(size = 16,  
+                                   family = font)) +
+  
+  theme(axis.title.x = element_text(size = 18,
+                                    family = font)) +
+  
+  theme(axis.title.y = element_text(size = 18, 
+                                    family = font,
+                                    vjust = 2.25))
+```
