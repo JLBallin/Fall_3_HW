@@ -1,0 +1,168 @@
+---
+title: "JB_SA_HW2"
+output: html_document
+date: "2023-11-12"
+---
+
+```{r}
+# Packages
+library( tidyverse )
+library( survival )
+library( survminer )
+library( flexsurv )
+```
+
+```{r}
+# Data
+data <- read.csv("https://raw.githubusercontent.com/sjsimmo2/Survival/master/hurricane.csv")
+```
+
+```{r}
+# Create New Target Variable
+data_flood <- data %>%
+  
+  # flood == 1 and no_flood == 0 
+  mutate( flood = ifelse( reason == 1, 1, 0 ) ) %>%
+  
+  # trim for main effects
+  select( -c( 9:57, 59:60 ) )
+```
+
+```{r}
+# Create Models
+
+# List of distribution names
+dist_names <- c("exp", "weibull", "lnorm", "gamma")
+
+# Function to fit a model given a distribution name
+fit_model <- function(dist_name) {
+  return(flexsurvreg(Surv( hour, flood ) ~ ., 
+                     dist = dist_name, 
+                     data = data_flood)$loglik
+         )
+}
+# Fit models for all distributions
+models <- lapply(dist_names, fit_model)
+
+# Set names for the list based on distribution names
+names(models) <- dist_names
+```
+
+```{r}
+# Nested Combinations
+combinations <- list(
+  exp_weibull = c("exp", "weibull", 1),
+  exp_gamma = c("exp", "gamma", 2),
+  weibull_gamma = c("weibull", "gamma", 1),
+  lnorm_gamma = c("lnorm", "gamma", 1)
+)
+
+# Function to compute statistical tests
+test_model <- function(combination){
+  
+  # Distribution names of the combinations
+  like_model <- combination[1]
+  like_ref <- combination[2]
+  df <- combination[3]
+  
+  # statistical test
+  pchisq(-2 * ( models[[like_model]] - models[[like_ref]] ), 
+         as.numeric(df), 
+         lower.tail = FALSE)
+}
+
+# Calculate P_values for every combination
+p_values <- lapply(combinations, test_model)
+
+# Conclude we need Weibull Distribution
+```
+
+```{r}
+# final model after backwards selection with p = 0.03
+model = survreg(Surv(hour, flood) ~ 
+                  backup + 
+                  servo +
+                  slope,
+                dist = "weibull", 
+                data = data_flood
+)
+
+# Print the final model
+summary(model)
+```
+
+```{r}
+survprob.75.50.25 = predict(model, 
+                           type = "quantile", 
+                           se.fit = TRUE,
+                           p = c( 0.25, 0.5, 0.75 ))
+
+```
+
+```{r}
+# Create Actual survival probabilites
+survprob.actual = 1 - psurvreg( data_flood$flood,
+                               mean = predict( model, 
+                                              type = "lp" ),
+                               scale = model$scale, 
+                               distribution = model$dist )
+
+# Estimate difference with backup upgrade
+new_time = qsurvreg( 1 - survprob.actual,
+                    mean = predict( model, 
+                                  type = "lp" ) + 
+                      coef(model)['backup'],
+                    scale = model$scale, 
+                    distribution = model$dist )
+
+data_flood$new_time = new_time
+data_flood$diff = data_flood$new_time - data_flood$hour
+impact.backup = data.frame( data_flood$hour, 
+                      data_flood$new_time, 
+                      data_flood$diff,
+                      data_flood$flood,
+                      data_flood$backup )
+                      colnames( impact.backup ) = c(
+                        "O.Hour",
+                        "N.Hour",
+                        "Diff",
+                        "flood",
+                        "backup")
+                      
+impact.backup2 = subset( impact.backup, flood == 1 & backup == 0)
+
+# Estimate difference with servo upgrade
+new_time2 = qsurvreg( 1 - survprob.actual,
+                    mean = predict( model, 
+                                  type = "lp" ) + 
+                      coef(model)['servo'],
+                    scale = model$scale, 
+                    distribution = model$dist )
+
+data_flood$new_time2 = new_time2
+data_flood$diff2 = data_flood$new_time2 - data_flood$hour
+impact.servo = data.frame( data_flood$hour, 
+                      data_flood$new_time, 
+                      data_flood$diff2,
+                      data_flood$flood,
+                      data_flood$servo )
+                      colnames( impact.servo ) = c(
+                        "O.Hour",
+                        "N.Hour",
+                        "Diff",
+                        "flood",
+                        "servo")
+impact.servo2 = subset( impact.servo, flood == 1 & servo == 0)
+head(impact.servo2)
+```
+
+```{r}
+# These are pumps that maximize improvement per dollar
+improvements <- data.frame(
+  improvements = c(
+    389, 392, 426, 361, 373, 387, 423, 339, 357, 366,
+    370, 345, 349, 337, 342, 372, 380, 324, 333, 317,
+    395, 364, 322, 427, 325
+  )
+)
+```
