@@ -10,6 +10,7 @@ library( tidyverse )
 library( survival )
 library( survminer )
 library( flexsurv )
+library( lpSolve )
 ```
 
 ```{r}
@@ -26,6 +27,9 @@ data_flood <- data %>%
   
   # trim for main effects
   select( -c( 9:57, 59:60 ) )
+
+data_flood <- data_flood %>%
+  mutate(index = row_number())
 ```
 
 ```{r}
@@ -101,7 +105,7 @@ survprob.75.50.25 = predict(model,
 
 ```{r}
 # Create Actual survival probabilites
-survprob.actual = 1 - psurvreg( data_flood$flood,
+survprob.actual = 1 - psurvreg( data_flood$hour,
                                mean = predict( model, 
                                               type = "lp" ),
                                scale = model$scale, 
@@ -117,14 +121,13 @@ new_time = qsurvreg( 1 - survprob.actual,
 
 data_flood$new_time = new_time
 data_flood$diff = data_flood$new_time - data_flood$hour
-impact.backup = data.frame( data_flood$hour, 
-                      data_flood$new_time, 
+impact.backup = data.frame( 
+                      data_flood$index, 
                       data_flood$diff,
                       data_flood$flood,
                       data_flood$backup )
                       colnames( impact.backup ) = c(
-                        "O.Hour",
-                        "N.Hour",
+                        "Index",
                         "Diff",
                         "flood",
                         "backup")
@@ -141,14 +144,13 @@ new_time2 = qsurvreg( 1 - survprob.actual,
 
 data_flood$new_time2 = new_time2
 data_flood$diff2 = data_flood$new_time2 - data_flood$hour
-impact.servo = data.frame( data_flood$hour, 
-                      data_flood$new_time, 
+impact.servo = data.frame( 
+                      data_flood$index,
                       data_flood$diff2,
                       data_flood$flood,
                       data_flood$servo )
                       colnames( impact.servo ) = c(
-                        "O.Hour",
-                        "N.Hour",
+                        "Index",
                         "Diff",
                         "flood",
                         "servo")
@@ -157,12 +159,52 @@ head(impact.servo2)
 ```
 
 ```{r}
-# These are pumps that maximize improvement per dollar
-improvements <- data.frame(
-  improvements = c(
-    389, 392, 426, 361, 373, 387, 423, 339, 357, 366,
-    370, 345, 349, 337, 342, 372, 380, 324, 333, 317,
-    395, 364, 322, 427, 325
-  )
-)
+upgrades <- left_join(impact.backup2, impact.servo2, by = "Index") %>%
+  # Subset Data
+  select(c('Index', 'Diff.x', 'Diff.y')) %>%
+  
+  # Rename columns
+   rename('Diff.backup' = 'Diff.x',
+         'Diff.servo' = 'Diff.y') %>%
+  
+  
+  # If only one upgrade is an option set the other upgrade to 0
+  mutate_all(~ifelse(is.na(.), 0, .))
+
+```
+
+```{r}
+#write.csv(upgrades, 'C:/Users/Balli/OneDrive/Desktop/MSA Graduate Program/Fall 3/Survival Analysis/HW/upgrades.csv')
+```
+
+```{r}
+data <- "Pump Upgrade
+361.00 s
+389.00 b
+392.00 b
+426.00 b
+373.00 b
+387.00 b
+423.00 b
+339.00 s
+357.00 s
+366.00 b
+370.00 s
+345.00 b
+349.00 b
+380.00 s
+342.00 s
+337.00 b
+372.00 b
+317.00 s
+324.00 b
+333.00 b
+364.00 s"
+
+# Read the data into a data frame
+df <- read.table(text = data, header = TRUE)
+
+# Print the data frame
+print(df)
+
 ```
