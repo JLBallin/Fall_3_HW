@@ -1,0 +1,277 @@
+---
+title: "ML HW2"
+output: html_document
+date: "2023-11-15"
+---
+
+```{r}
+library(vcdExtra)
+library(car)
+library(dplyr)
+library(DescTools)
+library(mgcv)
+library(visdat)
+library(naniar)
+library(Hmisc)
+library(earth)
+library(ROCit)
+library( pROC )
+library( ggplot2 )
+library(randomForest)
+library(xgboost)
+```
+
+```{r}
+insurance_t <- read.csv("/Users/josephbarnabei/Desktop/FALL\ 3/Homework2_ML/insurance_t.csv")
+```
+
+```{r}
+#List categoricals
+categorical <- c("DDA", "DIRDEP", "NSF", "SAV", "ATM", "CD", "IRA", "INV", "MM", "MMCRED",
+                 "CC", "CCPURC", "SDB", "INAREA", "INS")
+
+#missing values
+colSums(is.na(insurance_t))
+
+
+#Imputed flag for missings only for non categorical variables
+for (i in 1:ncol(insurance_t)) {  
+  if (!(colnames(insurance_t[i]) %in% categorical)){
+    col_name <- names(insurance_t)[i]
+    imputation_flag_col <- ifelse(is.na(insurance_t[, i]), 1, 0)
+    insurance_t <- cbind(insurance_t, imputation_flag_col)
+    colnames(insurance_t)[ncol(insurance_t)] <- paste0("Missing_",col_name)}
+}
+
+colnames(insurance_t)
+
+#Impute median for continuous
+for(i in names(insurance_t)){
+  if (is.numeric(insurance_t[[i]])){
+    insurance_t[[i]][is.na(insurance_t[[i]])] <- median(insurance_t[[i]], na.rm = TRUE)
+  }
+}
+
+
+#Checking for number of levels over 10 to treat as
+for (i in names(insurance_t)){
+  if (i %in% categorical){
+    print(i)
+    print(nlevels(as.factor(insurance_t[[i]])))
+  }
+}
+
+#Categoricals to factors 
+for (i in names(insurance_t)){
+  if (i %in% categorical){
+    insurance_t[[i]]<- as.factor(insurance_t[[i]])
+  }
+}
+```
+
+```{r}
+insurance.df <- as.data.frame(insurance_t)
+```
+
+```{r}
+set.seed(47)
+rf.bank <- randomForest(factor(INS) ~ ., data = insurance.df, ntree = 500, importance = TRUE)
+```
+
+```{r}
+plot(rf.bank, main = "Number of Trees Compared to MSE")
+```
+
+```{r}
+#variable importance plot
+varImpPlot(rf.bank,
+           sort = TRUE,
+           n.var = 10,
+           main = "Top 10 - Variable Importance")
+```
+```{r}
+importance(rf.bank)
+```
+
+TUNING THE TREE
+```{r}
+set.seed(47)
+tuneRF(x = insurance.df[, !colnames(insurance.df) %in% "INS"], y = insurance.df$INS, 
+       plot = TRUE, ntreeTry = 500, stepFactor = 0.5)
+```
+
+FINAL TUNED MODEL with ntry= 7, trees = 300
+```{r}
+set.seed(47)
+rf.bank_final <- randomForest(factor(INS) ~ ., data = insurance.df, ntree = 300, mtry = 7, importance = TRUE)
+```
+Final variable importance
+```{r}
+varImpPlot(rf.bank_final,
+           sort = TRUE,
+           n.var = 14,
+           main = "Order of Variables")
+```
+
+```{r}
+importance(rf.bank_final, type = 1)
+```
+
+ROC Curve
+```{r}
+insurance_t$p_hat_m <- predict(rf.bank_final, type = "response")
+
+dec_tree_roc <- rocit(as.numeric(insurance_t$p_hat_m), as.numeric(insurance_t$INS))
+plot(dec_tree_roc)
+
+ciAUC(dec_tree_roc, level = 0.99)
+summary(dec_tree_roc)
+
+```
+
+-----------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------
+----------------------------------------   XG BOOST -------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------
+
+```{r}
+insurance_t$INS <- as.numeric(insurance_t$INS) + 1 
+insurance_t <-insurance_t %>% subset(select = -c(p_hat_m))
+
+train_x <- model.matrix((insurance_t$INS) ~ ., data = insurance_t)[, -1]
+
+train_y <- insurance_t$INS
+
+class(insurance_t$INS)
+```
+
+```{r}
+set.seed(47)
+xgb_bank <- xgboost(data = train_x, label = insurance_t$INS, subsample = 0.5, nrounds = 50, objective = "binary:logistic")
+```
+
+TUNING THE MODEL 
+```{r}
+#tune the number of trees - nrounds 
+set.seed(47)
+xgbcv.bank_pred <- xgb.cv(data = train_x, label = train_y, subsample = 0.5, nrounds = 50, nfold = 10, objective = "binary:logistic")
+```
+
+```{r}
+#get the optimal number from nround and put it in the code - GOT 9
+tune_grid <- expand.grid(
+  nrounds = 9,
+  eta = c(0.1, 0.15, 0.2, 0.25, 0.3),
+  max_depth = c(1:10),
+  gamma = c(0),
+  colsample_bytree = 1,
+  min_child_weight = 1,
+  subsample = c(0.25, 0.5, 0.75, 1)
+)
+```
+
+
+```{r}
+set.seed(47)
+xgb.ames.bank_carat <- train(x = train_x, y = train_y,
+      method = "xgbTree",
+      tuneGrid = tune_grid,
+      trControl = trainControl(method = 'cv', # Using 10-fold cross-validation
+                               number = 10))
+
+plot(xgb.ames.bank_carat)
+```
+
+```{r}
+#best tuned model
+xgb.ames.bank_carat$bestTune
+```
+
+```{r}
+#re-run the model with the updated parameters we found for inital best tune model,
+set.seed(47)
+xgbcv.bank_pred <- xgb.cv(data = train_x, label = train_y, max_depth = 5 ,subsample = 1, nrounds = 50, nfold = 10, eta = 0.3,objective = "binary:logistic")
+```
+
+#nrounds now is 15
+
+
+
+VARIABLE IMPORTANCE 
+```{r}
+#change the parameters to match what we have round as optimal numbers from best-tune
+xgb.bank_final <- xgboost(data = train_x, label = train_y, subsample = 1, nrounds = 15, eta = 0.3, max_depth = 5)
+xgb.importance(feature_names = colnames(train_x), model = xgb.bank_final)
+```
+clustering for importance 
+```{r}
+xgb.ggplot.importance(xgb.importance(feature_names = colnames(train_x), model = xgb.bank_final))
+```
+
+ROC curve
+```{r}
+insurance_t$p_hat_xg <- predict(xgb.bank_final, newdata = train_x, type = "response")
+
+dec_tree_roc <- rocit(as.numeric(insurance_t$p_hat_xg), as.numeric(insurance_t$INS))
+plot(dec_tree_roc, col = "pink")
+lines(c(0, 1), c(0, 1), col = "black", lty = 2)
+
+ciAUC(dec_tree_roc, level = 0.99)
+summary(dec_tree_roc)
+```
+
+
+```{r}
+object <- list('ROC'= roc(insurance_t$p_hat_xg, insurance_t$INS))
+object_2 <- rocit(as.numeric(insurance_t$p_hat_xg), as.numeric(insurance_t$INS))
+cols = c('ROC'='#ffb6c1', 'Chance Line'='gray')
+library( pROC )
+library(ggplot2)
+# Create plot object and map based on color
+ggroc(object, aes = c('color'), legacy.axes = TRUE, linewidth=1) +
+  
+  # Chance Line
+  geom_abline(aes(slope= 1, intercept = 0, colour = 'Chance Line'), linetype='dashed', linewidth=1) +
+  
+  # Labels
+  labs(x = "1 - Specificity",
+       y = "Sensitivity") +
+  
+  # Edit Legend
+  scale_colour_manual(name="Legend",values=cols) +
+  
+  # Theme
+  theme_bw() +
+  
+  # Box the Legend
+  theme(legend.box.background = element_rect(color="black", linewidth = 1)) +
+  theme(legend.text = element_text(family = font)) +
+  theme(legend.position = c(0.9, 0.2)) +
+  
+  # Labels Size
+  theme(axis.text.x = element_text(size = 16,  
+                                   family = font,
+                                   angle = 45,
+                                   hjust = 1,
+                                   vjust = 1)) +
+  
+  theme(axis.text.y = element_text(size = 16,  
+                                   family = font)) +
+  
+  theme(axis.title.x = element_text(size = 18,
+                                    family = font)) +
+  
+  theme(axis.title.y = element_text(size = 18, 
+                                    family = font,
+                                    vjust = 2.25))
+```
+
+
+
+
+
+
+
+
+
+
