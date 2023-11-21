@@ -10,6 +10,7 @@ library(here)
 library(visreg)
 library(cmprsk)
 library(reticulate)
+library(Hmisc)
 
 hurricane <- read.csv('https://raw.githubusercontent.com/sjsimmo2/Survival/master/hurricane.csv')
 
@@ -26,7 +27,7 @@ hurricane <- hurricane %>%
 
 
 ###### Variable selection
-#getting rid of trashhrack becuase of seperation issues
+#getting rid of trashrack becuase of seperation issues
 hurricane.fit <- coxph(Surv(time = hour, event = censored) ~ backup + age + bridgecrane + servo + gear + slope + elevation,data=hurricane)
 
 # Automatic Selection Techniques #
@@ -58,16 +59,12 @@ ggcoxzph(hurricane.fit.zph)
 
 
 #####Binning age and slope
-# Define breaks based on quantiles
-breaks1 <- quantile(hurricane$age, probs = seq(0, 1, 0.2), na.rm = TRUE)
-breaks2 <- quantile(hurricane$slope, probs = seq(0, 1, 0.25), na.rm = TRUE)
-
-# Bin the continuous variable using cut()
-hurricane$age <- cut(hurricane$age, breaks = c(-Inf, breaks1, Inf), labels = FALSE, include.lowest = TRUE)
-hurricane$slope <- cut(hurricane$slope, breaks = c(-Inf, breaks2, Inf), labels = FALSE, include.lowest = TRUE)
+# Define bins
+hurricane$age <- cut2(hurricane$age, g=4)
+hurricane$slope <- cut2(hurricane$slope, g =3)
 
 #making new survival and checking martingale
-hurricane.fit3 <- coxph(Surv(time = hour, event = censored) ~ age + servo + slope, data = hurricane)
+hurricane.fit3 <- coxph(Surv(time = hour, event = censored) ~ factor(age) + servo + factor(slope), data = hurricane)
 survminer::ggcoxfunctional(hurricane.fit3, data=hurricane)
 
 
@@ -118,7 +115,22 @@ longrun <- as.data.frame(apply(longrun, 1, censored2))
 longrun <- data.frame(t(longrun))
 
 ######Making Final Model
-longrun$stop_time <- longrun$stop_time+1
-pump.rse <- coxph(Surv(start_time, stop_time, censored) ~ servo + age + slope + longrun, data = longrun)
+longrun$servo <- as.numeric(longrun$servo)
+longrun$age <- as.factor(longrun$age)
+longrun$slope <- as.factor(longrun$slope)
+longrun$start_time <- as.numeric(longrun$start_time)
+longrun$stop_time <- as.numeric(longrun$stop_time) + 1
+longrun$censored <- as.numeric(longrun$censored)
+
+pump.rse <- coxph(Surv(start_time, stop_time, censored) ~ servo + age + slope + longrun, cluster = id, data = longrun)
 summary(pump.rse)
+
+#concordance
+concordance(pump.rse)
+
+#graph of estimated survival curve
+newdata <- data.frame(longrun = factor(c(1,0)), age = factor("[6.6, 7.1)"), slope = factor("[4,18]"), servo = 0)
+ggsurvplot(survfit(pump.rse,newdata),data=newdata, ylab = "Survival Probability", xlab="Hour", legend.labs=c("Running for 12 hours","Not Running for 12 Hours"), legend.title="Pump")
+
+
 
