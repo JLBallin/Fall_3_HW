@@ -5,29 +5,30 @@ date: "2023-11-26"
 ---
 
 ```{r}
-library(vcdExtra)
-library(car)
+#Libraries
 library(dplyr)
-library(DescTools)
-library(mgcv)
-library(visdat)
-library(naniar)
-library(Hmisc)
-library(earth)
 library(ROCit)
-library( pROC )
 library( ggplot2 )
-library(randomForest)
 library(xgboost)
+library(caret)
+library(iml)
+library(tidyverse)
+library(e1071)
+library(pROC)
 ```
 
 ```{r}
+#Datasets
 insurance_t <- read.csv("insurance_t.csv")
 insurance_v <- read.csv("insurance_v.csv")
 
+idx<- match(colnames(insurance_t), colnames(insurance_v))
+insurance_v <- insurance_v[,idx]
+
 ```
 
 ```{r}
+#training
 #List categoricals
 categorical <- c("DDA", "DIRDEP", "NSF", "SAV", "ATM", "CD", "IRA", "INV", "MM", "MMCRED",
                  "CC", "CCPURC", "SDB", "INAREA", "INS")
@@ -72,6 +73,7 @@ for (i in names(insurance_t)){
 ```
 
 ```{r}
+#Validation
 #List categoricals
 categorical <- c("DDA", "DIRDEP", "NSF", "SAV", "ATM", "CD", "IRA", "INV", "MM", "MMCRED",
                  "CC", "CCPURC", "SDB", "INAREA", "INS")
@@ -114,65 +116,62 @@ for (i in names(insurance_v)){
   }
 }
 ```
-Naive Bayes Model
-```{r}
-library(e1071)
 
-set.seed(47)
-nb.insurance <- naiveBayes(INS ~ ., data = insurance_t, laplace = 0, usekernel = TRUE)
-summary(nb.insurance)
+```{r}
+#Naive Bayes Model
+
+#set.seed(47)
+#nb.insurance <- naiveBayes(INS ~ ., data = insurance_t, laplace = 0, usekernel = TRUE)
+#summary(nb.insurance)
 ```
 ```{r}
-library(caret)
-library(klaR)
+#tuning
+#tune_grid <- expand.grid(
+  #usekernel = c(TRUE, FALSE),
+  #fL = c(0, 0.5, 1),
+  #adjust = c(0.1, 0.5, 1)
+#)
 
-tune_grid <- expand.grid(
-  usekernel = c(TRUE, FALSE),
-  fL = c(0, 0.5, 1),
-  adjust = c(0.1, 0.5, 1)
-)
+#set.seed(47)
+#nb.insurance.caret <- caret::train(INS ~ ., data = insurance_t,
+                       #method = "nb", 
+                       #tuneGrid = tune_grid,
+                       #trControl = trainControl(method = 'cv', number = 10))
 
-set.seed(47)
-nb.insurance.caret <- caret::train(INS ~ ., data = insurance_t,
-                       method = "nb", 
-                       tuneGrid = tune_grid,
-                       trControl = trainControl(method = 'cv', number = 10))
-
-nb.insurance.caret$bestTune
+#nb.insurance.caret$bestTune
 ```
 The best Naïve Bayes algorithm has a Laplace correction value of 0, a bandwidth adjustment of 0.1, and uses the kernel distributions for continuous predictor variables.
 
-ROC curve
 ```{r}
-set.seed(47)
-insurance_t$p_hat <- predict(nb.insurance,insurance_t, type = 'raw')[,2]
+#ROC curve
+#set.seed(47)
+#insurance_t$p_hat <- predict(nb.insurance,insurance_t, type = 'raw')[,2]
+
+#nb.roc <- roc(as.numeric(insurance_t$INS), as.numeric(insurance_t$p_hat))
+#plot(nb.roc, col = "pink", main = "ROC Curve for Neural Network Model")
 ```
 
 ```{r}
-nb.roc <- roc(as.numeric(insurance_t$INS), as.numeric(insurance_t$p_hat))
-plot(nb.roc, col = "pink", main = "ROC Curve for Neural Network Model")
+#AUC
+#library(pROC)
+#auc(insurance_t$INS, insurance_t$p_hat)
 ```
 
-```{r}
-library(pROC)
-auc(insurance_t$INS, insurance_t$p_hat)
-```
+#The model with the best AUC is the XGBoost Model with AUC of .861
 
-The model with the best AUC is the XGBoost Model with AUC of .861
-
-XGBoost
 ```{r}
-set.seed(47)
+#XGBoost
+
 insurance_t$INS <- as.numeric(insurance_t$INS) - 1
 
 train_x <- model.matrix(INS ~ ., data = insurance_t)[, -1]
 train_y <- insurance_t$INS
 
+set.seed(47)
 xgb.insurance <- xgboost(subsample = 1, nrounds = 15, max_depth = 5, eta = .3, nfold = 10, objective = "binary:logistic", data = train_x, label = train_y)
 ```
 ```{r}
-
-train_y <- as.factor(insurance_t$INS)
+train_y1 <- as.factor(train_y)
 #Tuning through caret
 tune_grid <- expand.grid(
   nrounds = 10,
@@ -184,7 +183,7 @@ tune_grid <- expand.grid(
   subsample = 1
 )
 
-xgb.ins.caret <- caret::train(x = train_x, y = train_y,
+xgb.ins.caret <- caret::train(x = train_x, y = train_y1,
       method = "xgbTree",
       tuneGrid = tune_grid,
       trControl = trainControl(method = 'cv', # Using 10-fold cross-validation
@@ -194,17 +193,19 @@ xgb.ins.caret <- caret::train(x = train_x, y = train_y,
 
 ```{r}
 #Validation
-set.seed(47)
 insurance_v$INS <- as.numeric(insurance_v$INS) - 1
 
 val_x <- model.matrix(INS ~ ., data = insurance_v)[, -1]
+val_x <- cbind(val_x, MMCRED5 = rep(0, nrow(val_x)))
+
+#column_to_remove <- which(colnames(train_x) == "p_hat")
+#train_x <- train_x[, -column_to_remove]
+
+val_x <- val_x[, colnames(train_x)]
+
 val_y <- insurance_v$INS
 
-xgb.insurance.val <- xgboost(subsample = 1, nrounds = 15, max_depth = 5, eta = .3, nfold = 10, objective = "binary:logistic", data = val_x, label = val_y)
-
-
-insurance_v$p_hat_xg <- predict(xgb.insurance.val, newdata = val_x, type = "response")
-
+insurance_v$p_hat_xg <- predict(xgb.insurance, newdata = val_x, type = "response")
 
 xgb_roc <- rocit(as.numeric(insurance_v$p_hat_xg), as.numeric(insurance_v$INS))
 plot(xgb_roc, col = "pink")
@@ -214,23 +215,31 @@ ciAUC(xgb_roc, level = 0.99)
 summary(xgb_roc)
 ```
 
-AUC of .926
-
-#Model Interpretation
+#AUC of .926
 ```{r}
-xgb_pred <- Predictor$new(xgb.ins.caret, data = data.frame(train_x) , y = train_y)
+column_to_remove <- which(colnames(insurance_v) == "p_hat_xg")
+insurance_v <- insurance_v[, -column_to_remove]
+```
 
+```{r}
+#Model Interpretation
+#ALE
+
+xgb_pred <- Predictor$new(xgb.insurance, data = data.frame(train_x), y = train_y)
+```
+
+```{r}
 ale_plot <- FeatureEffects$new(xgb_pred, method = "ale")
 ale_plot$plot(c("ACCTAGE"))
-ale_plot$plot()
+ale_plot$results$ACCTAGE
 ```
 
 ```{r}
+#PDP
 pd_plot <- FeatureEffects$new(xgb_pred, method = "pdp")
 pd_plot$plot(c("ACCTAGE"))
-pd_plot$plot()
-
 ```
+
 
 
 
